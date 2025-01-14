@@ -39,7 +39,7 @@ def make_parser():
                         default='/home/hannibal/Desktop/yolopv2.pt',
                         help='model.pt path(s)')
     parser.add_argument('--source', type=str,
-                        default='2',
+                        default='0',
                         help='source: 0(webcam) or path to video/image')
     parser.add_argument('--img-size', type=int, default=640,
                         help='inference size (pixels)')
@@ -58,15 +58,6 @@ def make_parser():
     parser.add_argument('--exist-ok', action='store_true',
                         help='existing project/name ok, do not increment')
 
-    # ROI 인자 (사다리꼴)
-    parser.add_argument('--roi-tl', nargs=2, type=float, default=[0.3, 0.4],
-                        help='ROI top-left ratio (x, y)')
-    parser.add_argument('--roi-tr', nargs=2, type=float, default=[0.7, 0.4],
-                        help='ROI top-right ratio (x, y)')
-    parser.add_argument('--roi-bl', nargs=2, type=float, default=[0.2, 0.9],
-                        help='ROI bottom-left ratio (x, y)')
-    parser.add_argument('--roi-br', nargs=2, type=float, default=[0.8, 0.9],
-                        help='ROI bottom-right ratio (x, y)')
 
     return parser
 
@@ -147,27 +138,6 @@ def detect_and_publish(opt, pub_img):
 
     t0 = time.time()
 
-    def get_roi_points(w, h):
-        tl = (int(opt.roi_tl[0] * w), int(opt.roi_tl[1] * h))
-        tr = (int(opt.roi_tr[0] * w), int(opt.roi_tr[1] * h))
-        bl = (int(opt.roi_bl[0] * w), int(opt.roi_bl[1] * h))
-        br = (int(opt.roi_br[0] * w), int(opt.roi_br[1] * h))
-        return np.array([tl, tr, br, bl], dtype=np.int32)
-
-    def apply_roi_mask(im, roi_pts):
-        mask = np.zeros_like(im, dtype=np.uint8)
-        cv2.fillPoly(mask, [roi_pts], (255, 255, 255))
-        return cv2.bitwise_and(im, mask)
-
-    def mask_outside_roi_in_seg(seg_mask, roi_pts):
-        h, w = seg_mask.shape[:2]
-        poly_mask = np.zeros((h, w), dtype=np.uint8)
-        cv2.fillPoly(poly_mask, [roi_pts], 1)
-        seg_mask[poly_mask == 0] = 0
-        return seg_mask
-
-    def draw_roi(im, roi_pts):
-        cv2.polylines(im, [roi_pts], isClosed=True, color=(0, 255, 255), thickness=3)
 
     # main loop
     for path_item, img, im0s, vid_cap in dataset:
@@ -177,41 +147,40 @@ def detect_and_publish(opt, pub_img):
         im0_display = im0s.copy()
         im0_det = im0s.copy()
 
-        h, w = im0s.shape[:2]
-        roi_pts = get_roi_points(w, h)
-        im0_det = apply_roi_mask(im0_det, roi_pts)
 
-        # letterbox된 img
+
+        # 3. convert img (640*640*3 result of phase2) io img_t (640*640*4 numpy tensor) by using letterbox
         img_t = torch.from_numpy(img).to(device)
         img_t = img_t.half() if half else img_t.float()
         img_t /= 255.0
         if img_t.ndimension() == 3:
             img_t = img_t.unsqueeze(0)
 
+        # Inferencing
         t1 = time_synchronized()
         [_, _], seg, ll = model(img_t)
         t2 = time_synchronized()
-
-        # Lane Line만
-        ll_seg_mask = lane_line_mask(ll)
-        ll_seg_mask = mask_outside_roi_in_seg(ll_seg_mask, roi_pts)
-        zero_mask = np.zeros_like(ll_seg_mask, dtype=np.uint8)
-
+        # Line lane mask
+        ll_seg_mask = lane_line_mask(ll).astype(np.uint8)
         inf_time.update(t2 - t1, img_t.size(0))
 
-        # 세그 시각화
-        show_seg_result(im0_display, (zero_mask, ll_seg_mask), is_demo=True)
-        draw_roi(im0_display, roi_pts)
 
-        # 퍼블리시
+        # 세그 시각화
+        # 4. display 640*640 into 1280*720 (not resize!!! just display)
+        show_seg_result(im0_display, (ll_seg_mask), is_demo=True)
+        
         try:
-            ros_img = bridge.cv2_to_imgmsg(im0_display, encoding="bgr8")
+            ros_img = bridge.cv2_to_imgmsg(ll_seg_mask * 255, encoding="mono8") 
             pub_img.publish(ros_img)
         except CvBridgeError as e:
             rospy.logerr("CvBridge Error: %s", str(e))
+        
 
         # (선택) 화면 표시
-        cv2.imshow('YOLOPv2 LaneLine Only (ROS)', im0_display)
+        cv2.imshow('YOLOPv2 LaneLine with Original Image (ROS)', im0_display)
+        cv2.imshow('YOLOPv2 LaneLine Only (ROS)', (ll_seg_mask * 255).astype(np.uint8))
+        
+        
         if cv2.waitKey(1) & 0xFF == ord('q'):
             rospy.loginfo("[INFO] q 키 입력 -> 종료")
             if isinstance(vid_writer, cv2.VideoWriter):

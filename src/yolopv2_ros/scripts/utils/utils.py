@@ -168,26 +168,25 @@ def show_seg_result(img, result, palette=None, is_demo=False):
     if palette is None:
         palette = np.random.randint(0, 255, size=(3, 3))
     palette[0] = [0, 0, 0]
-    palette[1] = [0, 255, 0]
     palette[2] = [255, 0, 0]
     palette = np.array(palette)
     assert palette.shape[0] == 3
     assert palette.shape[1] == 3
 
-    if not is_demo:
-        color_seg = np.zeros((result.shape[0], result.shape[1], 3), dtype=np.uint8)
-        for label, color in enumerate(palette):
-            color_seg[result == label, :] = color
-    else:
-        color_area = np.zeros((result[0].shape[0], result[0].shape[1], 3), dtype=np.uint8)
-        color_area[result[0] == 1] = [0, 255, 0]
-        color_area[result[1] == 1] = [255, 0, 0]
-        color_seg = color_area
+    # 단일 마스크에 대해 색상 적용
+    color_seg = np.zeros((result.shape[0], result.shape[1], 3), dtype=np.uint8)
+    color_seg[result == 1, :] = palette[2]
 
+    # RGB -> BGR
     color_seg = color_seg[..., ::-1]
     color_mask = np.mean(color_seg, 2)
+    
     img[color_mask != 0] = img[color_mask != 0] * 0.5 + color_seg[color_mask != 0] * 0.5
 
+    
+    
+    
+    
 def increment_path(path, exist_ok=True, sep=''):
     path = Path(path)
     if (path.exists() and exist_ok) or (not path.exists()):
@@ -338,7 +337,11 @@ class LoadCamera:
             raise StopIteration
         self.frame += 1
 
+
+        # 1. convert input OG image to 1280*720
         img0 = cv2.resize(img0, (1280, 720), interpolation=cv2.INTER_LINEAR)
+        
+        # 2. befor yolop, convert 1280*720 into 640*640
         img = letterbox(img0, self.img_size, stride=self.stride)[0]
         img = img[:, :, ::-1].transpose(2, 0, 1)
         img = np.ascontiguousarray(img)
