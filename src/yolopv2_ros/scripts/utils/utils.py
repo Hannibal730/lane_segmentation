@@ -320,12 +320,38 @@ class LoadCamera:
         self.source = source
         self.img_size = img_size
         self.stride = stride
-        self.cap = cv2.VideoCapture(int(source))  # 웹캠 장치 ID
-        self.mode = 'stream'
+
+        # 1) 정수가 아니라 '/dev/video2'처럼 문자열일 경우도 대응
+        #    혹은 그대로 int(source)만 사용하되, 두 번째 인자로 CAP_V4L2 지정
+        try:
+            cam_index = int(self.source)
+            self.cap = cv2.VideoCapture(cam_index, cv2.CAP_V4L2)
+        except ValueError:
+            # 만약 source가 '/dev/video2' 형태라면
+            self.cap = cv2.VideoCapture(self.source, cv2.CAP_V4L2)        
+        
+        
+        
+        
+
         if not self.cap.isOpened():
             raise Exception(f"카메라를 열 수 없습니다. ID: {source}")
+
+        # 2) 포맷, 해상도, FPS 명시
+        self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)        
+        
+        
+        
+        
         self.width = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS)
+        print(f"[INFO] Camera opened: {self.width}x{self.height} @ {self.fps} FPS (MJPEG, V4L2)")        
+        
+        self.mode = 'stream'
         self.frame = 0
 
     def __iter__(self):
